@@ -46,6 +46,17 @@ def summarize_with_bart(given_text):
     return summarizer(given_text, do_sample=False)
 
 
+def check_words_in_transcription(word_list, input_string):
+    count = 0
+    for word in word_list:
+        if word in input_string:
+            count += 1
+
+    if count >= 3:
+        return True
+    return False
+
+
 def classify_with_bart(given_text):
     classifier = pipeline("zero-shot-classification",
                           model="facebook/bart-large-mnli")
@@ -125,13 +136,57 @@ def process_video_pipeline(video_directory, video_path):
     st.subheader("Video Transcription from ML Model")
     st.write(transcript_text)
 
-    video_classification = classify_with_bart(transcript_text)
-    video_results_dataframe = {
-        "labels": video_classification['labels'],
-        "scores": video_classification['scores']
-    }
-    video_results_dataframe = pd.DataFrame.from_dict(video_results_dataframe)
-    st.table(video_results_dataframe)
+    offensive_words_list = [
+        "Arse",
+        "Bloody",
+        "Bugger",
+        "Crap",
+        "Minger",
+        "Sod - off",
+        "Arsehole",
+        "Balls",
+        "Bint",
+        "Bitch",
+        "Bollocks",
+        "Bullshit",
+        "Feck",
+        "Munter",
+        "Pissed/pissed off",
+        "Shit",
+        "Son of a bitch",
+        "Tits",
+        "Bastard",
+        "Beef curtains",
+        "Bellend",
+        "Bloodclaat",
+        "Clunge",
+        "Cock",
+        "Dick",
+        "Dickhead",
+        "Fanny",
+        "Flaps",
+        "Gash",
+        "Knob",
+        "Minge",
+        "Prick",
+        "Punani",
+        "Pussy",
+        "Snatch",
+        "Twat"
+    ]
+
+    flag = check_words_in_transcription(offensive_words_list, transcript_text)
+    if not flag:
+        st.success("No Offensive Data Found in Video")
+        video_classification = classify_with_bart(transcript_text)
+        video_results_dataframe = {
+            "labels": video_classification['labels'],
+            "scores": video_classification['scores']
+        }
+        video_results_dataframe = pd.DataFrame.from_dict(video_results_dataframe)
+        st.table(video_results_dataframe)
+    else:
+        st.error("Offensive Data Found in Video, Rejecting Video")
 
 
 # Set the app title
