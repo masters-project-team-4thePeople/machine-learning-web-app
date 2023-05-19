@@ -1,20 +1,74 @@
 # Import required libraries
+import pandas as pd
 import streamlit as st
 import os
 import glob
 from scenedetect import open_video, ContentDetector, SceneManager, StatsManager
 from scenedetect.scene_manager import save_images
+from transformers import BlipProcessor, BlipForConditionalGeneration
+from transformers import pipeline
+import whisper
+import moviepy.editor
+from PIL import Image
 
 
-def find_scenes(video_path):
-    st.write("Processing File {video_path}".format(video_path=video_path))
-    video_name = video_path.name
+def save_uploaded_file(uploadedfile):
+    video_name = uploadedfile.name
     get_video_name = str(video_name).split('.')[0]
     video_directory = "video_frames/" + get_video_name
 
     if not os.path.exists(video_directory):
         os.makedirs(video_directory)
 
+    with open(os.path.join(video_directory, uploadedfile.name), "wb") as f:
+        f.write(uploadedfile.getbuffer())
+
+    return {
+        "directory_path": video_directory,
+        "file_path": os.path.join(video_directory, uploadedfile.name)
+    }
+
+
+def predict_with_blip_model(image):
+    processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+    model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+
+    raw_image = Image.open(image).convert('RGB')
+
+    # unconditional image captioning
+    inputs = processor(raw_image, return_tensors="pt")
+    out = model.generate(**inputs)
+    return processor.decode(out[0], skip_special_tokens=True)
+
+
+def summarize_with_bart(given_text):
+    summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+    return summarizer(given_text, do_sample=False)
+
+
+def classify_with_bart(given_text):
+    classifier = pipeline("zero-shot-classification",
+                          model="facebook/bart-large-mnli")
+
+    candidate_labels = ["film_and_animation",
+                        "autos_and_vehicles",
+                        "music",
+                        "pets_and_animals",
+                        "sports",
+                        "travel_and_events",
+                        "gaming",
+                        "people_and_blogs",
+                        "comedy",
+                        "entertainment",
+                        "news_and_politics",
+                        "how_to_and_style",
+                        "education",
+                        "science_and_technology",
+                        "nonprofits_and_activism"]
+    return classifier(given_text, candidate_labels)
+
+
+def process_video_pipeline(video_directory, video_path):
     video_stream = open_video(video_path)
     stats_manager = StatsManager()
 
@@ -32,9 +86,52 @@ def find_scenes(video_path):
     all_image_files = glob.glob(video_directory + '/*.jpg')
     all_image_files.sort()
 
-    video_understanding = ""
+    st.success("Video Frame Processing Started")
+    all_video_captions = ""
     for image in all_image_files:
-        st.write(" Processing {image_name}".format(image_name=image))
+        st.write("Detected Scene : {image_name}".format(image_name=image))
+        st.image(image)
+        image_caption = predict_with_blip_model(image)
+        # detect_objects_in_image(image)
+        st.write("In this Image : {captions}".format(captions=image_caption))
+        all_video_captions += image_caption + "."
+        st.divider()
+
+    st.success("Video Frame Processing Completed")
+
+    st.header("Generated Captions and Video Summary")
+
+    st.subheader("Generated Information From Video")
+    st.write("{video_text}".format(video_text=all_video_captions))
+
+    st.subheader("Generated Video Summary from ML Model")
+    video_summary = summarize_with_bart(all_video_captions)[0]['summary_text']
+    st.write("{summarized_video}".format(summarized_video=video_summary))
+
+    st.header("Video Transcription")
+
+    # Load the Video
+    video = moviepy.editor.VideoFileClip(video_path)
+
+    # Extract the Audio
+    audio = video.audio
+
+    # Export the Audio
+    audio.write_audiofile("audio.mp3")
+    model = whisper.load_model("base")
+    result = model.transcribe("audio.mp3")
+    transcript_text = result["text"]
+
+    st.subheader("Video Transcription from ML Model")
+    st.write(transcript_text)
+
+    video_classification = classify_with_bart(transcript_text)
+    video_results_dataframe = {
+        "labels": video_classification['labels'],
+        "scores": video_classification['scores']
+    }
+    video_results_dataframe = pd.DataFrame.from_dict(video_results_dataframe)
+    st.table(video_results_dataframe)
 
 
 # Set the app title
@@ -47,8 +144,9 @@ uploaded_video_file = st.file_uploader("Choose a video mp4 file", type=["mp4"])
 if uploaded_video_file is not None:
     # Display the uploaded video
     st.video(uploaded_video_file)
-    find_scenes(uploaded_video_file)
+    saved_video_path = save_uploaded_file(uploaded_video_file)
+    st.subheader("Processing Video")
+    process_video_pipeline(saved_video_path.get("directory_path"),
+                           saved_video_path.get("file_path"))
 else:
     st.write("Please upload a video file")
-
-
